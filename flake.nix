@@ -5,9 +5,6 @@
     nixpkgs.url = "github:NixOS/nixpkgs";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
-
-    "plutarch-extra-1.2.1".url =
-      "github:plutonomicon/plutarch-plutus?rev=8d6ca9e5ec8425c2f52faf59a4737b4fd96fb01b";
   };
 
   outputs = inputs@{ flake-parts, nixpkgs, ... }:
@@ -29,7 +26,7 @@
               cp -r ${src}/${dir}/* $out
             '';
 
-          mkSdist = name: version: hPkgSource:
+          mkSDist = name: version: hPkgSource:
             let
               cabalFiles =
                 builtins.concatLists
@@ -67,14 +64,14 @@
                 in
                   if foundVersion != null
                   then foundVersion
-                  else abort "Cannot parse version from fetched cabal file for ${name}-${version}";
+                  else abort "Cannot parse version in fetched cabal file for ${name}-${version}";
 
               sourceName =
                 let foundName = getCabalField "name";
                 in
                   if foundName != null
                   then foundName
-                  else abort "Cannot parse version from fetched cabal file for ${name}-${version}";
+                  else abort "Cannot parse version in fetched cabal file for ${name}-${version}";
 
             in
               assert
@@ -100,46 +97,52 @@
               cp /tmp/source/*.cabal $out/${name}.cabal
               '';
 
-          foo = sources:
+          sourceToSDist = sources:
             builtins.mapAttrs
               (packageName: versionSet:
                 builtins.mapAttrs
-                  (version: src: mkSdist packageName version src
-                  )
-                  versionSet
-              )
-              sources;
+                  (version: src:
+                    mkSDist packageName version src
+                  ) versionSet
+              ) sources;
 
-          bar = foo sources;
+          bar = sourceToSDist sources;
 
           mkPkgDir = sources:
             let
+              sdists = sourceToSDist sources;
               copyPackages =
                 builtins.concatMap
                   (packageName:
                     builtins.map
                       (version:
                         let
-                          sdist = mkSdist packageName version (sources."${packageName}"."${version}");
+                          sdist = sdists."${packageName}"."${version}";
                         in ''
                           mkdir -p $out/${packageName}-${version}
                           cp ${sdist}/*.cabal $out/${packageName}-${version}
                           cp ${sdist}/*.tar.gz $out
                         ''
                       )
-                      (builtins.attrNames (sources."${packageName}"))
+                      (builtins.attrNames (sdists."${packageName}"))
                   )
-                  (builtins.attrNames sources);
+                  (builtins.attrNames sdists);
             in
               pkgs.runCommand "hackages-packages" {}
+                ''
+                mkdir -p $out
+                ${builtins.concatStringsSep "\n" copyPackages}
+                '';
+
+          genKeys =
+            pkgs.runCommand "genKeys" {}
               ''
-              mkdir -p $out
-              ${builtins.concatStringsSep "\n" copyPackages}
+
               '';
 
         in
           {
-            packages.test = bar.foo."0-0";
+            packages.test = bar.sourceToSDist."0-0";
             packages.foo = mkPkgDir sources;
             packages.sdist = pkgs.runCommand "combined-docs"
               {
