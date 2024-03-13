@@ -150,6 +150,11 @@
               } ''
               ls /tmp > $out
               '';
+
+            packages.generate_ed25519_keypair =
+              pkgs.writeShellScriptBin
+                "generate_ed25519_keypair"
+                (builtins.readFile ./generate_ed25519_keypair.sh) ;
           };
     };
 }
