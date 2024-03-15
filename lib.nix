@@ -1,6 +1,6 @@
-herbage:
-{ system, pkgs ? import herbage.input.nixpkgs { inherit system; } }:
-let lib = pkgs.lib;
+{ pkgs }:
+let
+  lib = pkgs.lib;
 in rec {
   subDirectory = dir: src:
     pkgs.runCommand "subdir-${dir}" { } ''
@@ -8,8 +8,24 @@ in rec {
       cp -r ${src}/${dir}/* $out
     '';
 
-  mkSDist = name: version: hPkgSource:
+  hackage-repo-tool =
+    (pkgs.haskell.lib.overrideSrc
+      pkgs.haskell.packages.ghc928.hackage-repo-tool {
+        src = subDirectory "hackage-repo-tool" (pkgs.fetchFromGitHub {
+          owner = "seungheonoh";
+          repo = "hackage-security";
+          rev = "89c00773160ea9128ddb14a4db1e17ae21e8cf42";
+          hash = "sha256-u4gnFG7JRqwNxcYoYJZdaqPEhssENp/tCMJWwhOwPIU=";
+        });
+      });
+
+  mkSDist = name: version: {src, timestamp ? null, subdir ? null}:
     let
+      hPkgSource =
+        if subdir != null
+        then "${src}/${subdir}"
+        else src;
+
       cabalFiles = builtins.concatLists (lib.mapAttrsToList (name: type:
         if type == "regular" && lib.hasSuffix ".cabal" name then
           [ name ]
@@ -46,6 +62,11 @@ in rec {
         abort
         "Cannot parse version in fetched cabal file for ${name}-${version}";
 
+      updateModifiedDate =
+        if timestamp != null
+        then ''touch -a -m -t $(date -d "${timestamp}" +%Y%m%d%H%M.%S) $out/*''
+        else "";
+
     in assert pkgs.lib.assertMsg (sourceVersion == version)
       "Version does not match. Source say ${sourceVersion}, Configuration say ${version}";
     assert pkgs.lib.assertMsg (sourceName == name)
@@ -66,32 +87,36 @@ in rec {
 
   sourceToSDist = sources:
     builtins.mapAttrs (packageName: versionSet:
-      builtins.mapAttrs (version: src: mkSDist packageName version src)
+      builtins.mapAttrs (version: info:
+        info // {sdist = mkSDist packageName version info;}
+      )
       versionSet) sources;
 
-  mkPkgDir = sources:
+  genHackage = keyDir: sources:
     let
       sdists = sourceToSDist sources;
       copyPackages = builtins.concatMap (packageName:
         builtins.map (version:
-          let sdist = sdists."${packageName}"."${version}";
+          let
+            p = sdists."${packageName}"."${version}";
           in ''
-            mkdir -p $out/${packageName}-${version}
-            cp ${sdist}/*.cabal $out/${packageName}-${version}
-            cp ${sdist}/*.tar.gz $out
+            cp ${p.sdist}/${packageName}-${version}.tar.gz $out/package
+            ${
+              if p ? timestamp
+              then ''
+                touch -a -m -t $(date -d "${p.timestamp}" +%Y%m%d%H%M.%S) \
+                  $out/package/${packageName}-${version}.tar.gz
+              ''
+              else ""
+            }
           '') (builtins.attrNames (sdists."${packageName}")))
         (builtins.attrNames sdists);
-    in pkgs.runCommand "hackages-packages" { } ''
-      mkdir -p $out
-      ${builtins.concatStringsSep "\n" copyPackages}
-    '';
-
-  genHackage = keyDir: sources:
-    pkgs.runCommand "genHackage" {
-      buildInputs = [ herbage.packages."${system}".hackage-repo-tool ];
+    in pkgs.runCommand "hackages-packages" {
+      buildInputs = [ hackage-repo-tool ];
     } ''
       mkdir -p $out/package
-      cp ${(mkPkgDir sources)}/*.tar.gz $out/package
+      ${builtins.concatStringsSep "\n" copyPackages}
+
       hackage-repo-tool bootstrap \
             --repo $out \
             --keys ${keyDir} \
