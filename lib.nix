@@ -8,17 +8,6 @@ in rec {
       cp -r ${src}/${dir}/* $out
     '';
 
-  hackage-repo-tool =
-    (pkgs.haskell.lib.overrideSrc
-      pkgs.haskell.packages.ghc928.hackage-repo-tool {
-        src = subDirectory "hackage-repo-tool" (pkgs.fetchFromGitHub {
-          owner = "seungheonoh";
-          repo = "hackage-security";
-          rev = "89c00773160ea9128ddb14a4db1e17ae21e8cf42";
-          hash = "sha256-u4gnFG7JRqwNxcYoYJZdaqPEhssENp/tCMJWwhOwPIU=";
-        });
-      });
-
   mkSDist = name: version: {src, timestamp ? null, subdir ? null}:
     let
       hPkgSource =
@@ -112,7 +101,7 @@ in rec {
           '') (builtins.attrNames (sdists."${packageName}")))
         (builtins.attrNames sdists);
     in pkgs.runCommand "hackages-packages" {
-      buildInputs = [ hackage-repo-tool ];
+      buildInputs = [ pkgs.hackage-repo-tool ];
     } ''
       mkdir -p $out/package
       ${builtins.concatStringsSep "\n" copyPackages}
