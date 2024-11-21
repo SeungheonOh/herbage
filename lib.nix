@@ -8,7 +8,7 @@ in rec {
       cp -r ${src}/${dir}/* $out
     '';
 
-  mkSDist = name: version: {src, timestamp ? null, subdir ? null}:
+  mkSDist = name: version: {src, timestamp ? null, subdir ? null, overrideVersion ? false}:
     let
       hPkgSource =
         if subdir != null
@@ -23,8 +23,8 @@ in rec {
 
       cabalFile = if builtins.length cabalFiles == 1 then
         "${hPkgSource}/${builtins.head cabalFiles}"
-      else
-        abort "No unique cabal file exists in ${name}-${version}";
+                  else
+                    abort "No unique cabal file exists in ${name}-${version}";
 
       getCabalField = field:
         let
@@ -33,45 +33,52 @@ in rec {
             let found = builtins.match "^${field} *: *([^ ]*) *$" line;
             in if found != null && builtins.length found == 1 then
               builtins.head found
-            else
-              null) lines);
+               else
+                 null) lines);
         in if found == [ ] then null else builtins.head found;
 
       sourceVersion = let foundVersion = getCabalField "version";
-      in if foundVersion != null then
-        foundVersion
-      else
-        abort
-        "Cannot parse version in fetched cabal file for ${name}-${version}";
+                      in if foundVersion != null then
+                        foundVersion
+                         else
+                           abort
+                             "Cannot parse version in fetched cabal file for ${name}-${version}";
 
       sourceName = let foundName = getCabalField "name";
-      in if foundName != null then
-        foundName
-      else
-        abort
-        "Cannot parse version in fetched cabal file for ${name}-${version}";
+                   in if foundName != null then
+                     foundName
+                      else
+                        abort
+                          "Cannot parse version in fetched cabal file for ${name}-${version}";
 
       updateModifiedDate =
         if timestamp != null
         then ''touch -a -m -t $(date -d "${timestamp}" +%Y%m%d%H%M.%S) $out/*''
         else "";
 
-    in assert pkgs.lib.assertMsg (sourceVersion == version)
+      patchVersion =
+        if (sourceVersion != version && overrideVersion)
+        then ''sed -i 's/^version\s*:\s*[^ ]*\s*/version:  ${version}/g' ${name}.cabal ''
+        else "";
+
+    in assert pkgs.lib.assertMsg (sourceVersion == version || overrideVersion)
       "Version does not match. Source say ${sourceVersion}, Configuration say ${version}";
-    assert pkgs.lib.assertMsg (sourceName == name)
-      "Name does not match. Source say ${sourceName}, Configuration say ${name}";
-    pkgs.runCommand "${name}-${version}-sdist" {
-      buildInputs = [ pkgs.cabal-install ];
-    } ''
+      assert pkgs.lib.assertMsg (sourceName == name)
+        "Name does not match. Source say ${sourceName}, Configuration say ${name}";
+      pkgs.runCommand "${name}-${version}-sdist" {
+        buildInputs = [ pkgs.cabal-install ];
+      } ''
       mkdir -p /tmp/source
       mkdir -p $out
       cp -r ${hPkgSource}/* /tmp/source
       cd /tmp/source
+      ${patchVersion}
       export CABAL_DIR=.
       cabal sdist --builddir=/tmp
       cp /tmp/sdist/* $out
       cp -r /tmp/source $out
       cp /tmp/source/*.cabal $out/${name}.cabal
+      cd $out
     '';
 
   sourceToSDist = sources:
@@ -79,7 +86,7 @@ in rec {
       builtins.mapAttrs (version: info:
         info // {sdist = mkSDist packageName version info;}
       )
-      versionSet) sources;
+        versionSet) sources;
 
   genHackage = keyDir: sources:
     let
